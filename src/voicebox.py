@@ -21,11 +21,11 @@ ACCESS_KEY = os.getenv('PICOVOICE_ACCESS_KEY', '')
 # Using built-in wake words - no .ppn files needed!
 WAKE_WORDS = ['americano', 'bumblebee', 'grasshopper']
 VIDEO_PATHS = {
-    0: "/home/pi/videobox/videos/americano.mp4",    # americano keyword
-    1: "/home/pi/videobox/videos/bumblebee.mp4",    # bumblebee keyword
-    2: "/home/pi/videobox/videos/grasshopper.mp4"   # grasshopper keyword
+    0: "/home/varun/videobox/videos/americano.mp4",    # americano keyword
+    1: "/home/varun/videobox/videos/bumblebee.mp4",    # bumblebee keyword
+    2: "/home/varun/videobox/videos/grasshopper.mp4"   # grasshopper keyword
 }
-LISTENING_VIDEO = "/home/pi/videobox/videos/listening.mp4"
+LISTENING_VIDEO = "/home/varun/videobox/videos/listening.mov"
 
 # Window mode flag (set False for fullscreen)
 WINDOW_MODE = True
@@ -148,7 +148,8 @@ def main():
     # Start audio stream
     try:
         print("✓ Starting audio stream")
-        print(f"\nListening for: {', '.join([f\"'{word}'\" for word in WAKE_WORDS])}")
+        wake_words_list = ', '.join([f"'{word}'" for word in WAKE_WORDS])
+        print(f"\nListening for: {wake_words_list}")
         print("Press Ctrl+C to stop\n")
         
         with sd.InputStream(
