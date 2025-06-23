@@ -23,7 +23,7 @@ sudo apt install -y \
 
 # Create project directory
 echo "3. Setting up project directory..."
-cd /home/pi
+cd /home/varun
 if [ ! -d "videobox" ]; then
     echo "   Creating videobox directory..."
     mkdir -p videobox
@@ -31,7 +31,7 @@ fi
 
 # Set up Python virtual environment
 echo "4. Setting up Python environment..."
-cd /home/pi/videobox
+cd /home/varun/videobox
 python3 -m venv venv
 source venv/bin/activate
 

@@ -1,0 +1,1 @@
+sshpass -p '12345' ssh -o StrictHostKeyChecking=no varun@192.168.50.45 "whoami"

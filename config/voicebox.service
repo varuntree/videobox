@@ -4,14 +4,14 @@ After=graphical.target
 
 [Service]
 Type=simple
-User=pi
-Group=pi
-WorkingDirectory=/home/pi/videobox
+User=varun
+Group=varun
+WorkingDirectory=/home/varun/videobox
 Environment="DISPLAY=:0"
-Environment="XAUTHORITY=/home/pi/.Xauthority"
-Environment="HOME=/home/pi"
-Environment="PATH=/home/pi/videobox/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=/home/pi/videobox/venv/bin/python /home/pi/videobox/src/voicebox.py --fullscreen
+Environment="XAUTHORITY=/home/varun/.Xauthority"
+Environment="HOME=/home/varun"
+Environment="PATH=/home/varun/videobox/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/home/varun/videobox/venv/bin/python /home/varun/videobox/src/voicebox.py --fullscreen
 Restart=always
 RestartSec=5
 StandardOutput=journal

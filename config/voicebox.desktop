@@ -2,7 +2,7 @@
 Type=Application
 Name=VoiceBox
 Comment=Voice-Activated Video Display
-Exec=/home/pi/videobox/venv/bin/python /home/pi/videobox/src/voicebox.py --fullscreen
+Exec=/home/varun/videobox/venv/bin/python /home/varun/videobox/src/voicebox.py --fullscreen
 Terminal=false
 Categories=AudioVideo;
 StartupNotify=true

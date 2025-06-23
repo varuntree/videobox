@@ -24,8 +24,8 @@ for pkg in packages:
 
 # Test 2: Check video files
 print("\n2. Checking video files...")
-video_dir = "/home/pi/videobox/videos"
-required_videos = ['listening.mp4', 'americano.mp4', 'bumblebee.mp4', 'grasshopper.mp4']
+video_dir = "/home/varun/videobox/videos"
+required_videos = ['listening.mov', 'americano.mp4', 'bumblebee.mp4', 'grasshopper.mp4']
 
 for video in required_videos:
     path = os.path.join(video_dir, video)
@@ -37,12 +37,13 @@ for video in required_videos:
 
 # Test 3: Display test
 print("\n3. Testing display...")
-test_video = os.path.join(video_dir, 'listening.mp4')
+test_video = os.path.join(video_dir, 'listening.mov')
 if os.path.exists(test_video):
     print("   Playing listening video for 5 seconds...")
     proc = subprocess.Popen([
-        'mpv', '--hwdec=mmal', '--really-quiet', 
+        'mpv', '--vo=gpu', '--hwdec=auto', '--really-quiet', 
         '--geometry=800x480', '--title=Display Test',
+        '--vf=scale=1280:720',
         test_video
     ])
     time.sleep(5)
@@ -96,9 +97,9 @@ except ImportError:
 
 # Test 6: Environment check
 print("\n6. Checking environment...")
-if os.path.exists('/home/pi/videobox/.env'):
+if os.path.exists('/home/varun/videobox/.env'):
     from dotenv import load_dotenv
-    load_dotenv('/home/pi/videobox/.env')
+    load_dotenv('/home/varun/videobox/.env')
     if os.getenv('PICOVOICE_ACCESS_KEY'):
         print("   ✓ Picovoice access key found")
     else:

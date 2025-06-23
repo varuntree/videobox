@@ -37,10 +37,13 @@ def get_mpv_command(video_path, loop=False):
     """Build mpv command based on mode"""
     cmd = [
         'mpv',
-        '--hwdec=mmal',
+        '--vo=gpu',             # Use GPU video output
+        '--hwdec=no',           # Disable hardware acceleration (more stable)
         '--really-quiet',
-        '--no-osc',              # No on-screen controller
+        '--no-osc',             # No on-screen controller
         '--no-input-default-bindings',  # Disable keyboard shortcuts
+        '--vf=scale=800:480',   # Scale to smaller resolution
+        '--no-correct-pts',     # Faster playback
     ]
     
     if loop:
