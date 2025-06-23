@@ -44,6 +44,9 @@ def get_mpv_command(video_path, loop=False):
         '--no-input-default-bindings',  # Disable keyboard shortcuts
         '--vf=scale=800:480',   # Scale to smaller resolution
         '--no-correct-pts',     # Faster playback
+        '--no-border',          # Remove window borders
+        '--ontop',              # Keep on top of other windows
+        '--no-keepaspect-window', # Don't maintain aspect ratio of window
     ]
     
     if loop:
@@ -71,12 +74,12 @@ def stop_current_video():
     if current_video and current_video.poll() is None:
         current_video.terminate()
         try:
-            current_video.wait(timeout=2)
+            current_video.wait(timeout=1)  # Reduced timeout for faster transitions
         except subprocess.TimeoutExpired:
             current_video.kill()
             current_video.wait()
         current_video = None
-        time.sleep(0.1)  # Small delay for smooth transition
+        # Removed sleep for faster transitions
 
 def play_response_video(video_path):
     """Play a response video once, then return to listening"""

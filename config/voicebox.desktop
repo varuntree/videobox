@@ -2,7 +2,8 @@
 Type=Application
 Name=VoiceBox
 Comment=Voice-Activated Video Display
-Exec=/home/varun/videobox/venv/bin/python /home/varun/videobox/src/voicebox.py --fullscreen
+Exec=/home/varun/videobox/scripts/hide_desktop.sh
 Terminal=false
 Categories=AudioVideo;
-StartupNotify=true
+StartupNotify=false
+X-GNOME-Autostart-Delay=3
