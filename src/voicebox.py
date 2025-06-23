@@ -25,7 +25,7 @@ VIDEO_PATHS = {
     1: "/home/varun/videobox/videos/bumblebee.mp4",    # bumblebee keyword
     2: "/home/varun/videobox/videos/grasshopper.mp4"   # grasshopper keyword
 }
-LISTENING_VIDEO = "/home/varun/videobox/videos/listening.mov"
+LISTENING_VIDEO = "/home/varun/videobox/videos/listening.mp4"
 
 # Window mode flag (set False for fullscreen)
 WINDOW_MODE = True
