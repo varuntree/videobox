@@ -26,6 +26,7 @@ for pkg in packages:
 print("\n2. Checking video files...")
 video_dir = "/home/varun/videobox/videos"
 required_videos = ['listening.mp4', 'americano.mp4', 'bumblebee.mp4', 'grasshopper.mp4']
+optional_videos = ['welcome.mp4']
 
 for video in required_videos:
     path = os.path.join(video_dir, video)
@@ -34,6 +35,14 @@ for video in required_videos:
         print(f"   ✓ {video} ({size:.1f} MB)")
     else:
         print(f"   ✗ {video} NOT FOUND")
+
+for video in optional_videos:
+    path = os.path.join(video_dir, video)
+    if os.path.exists(path):
+        size = os.path.getsize(path) / 1024 / 1024  # MB
+        print(f"   ✓ {video} ({size:.1f} MB) - Optional")
+    else:
+        print(f"   ⚬ {video} not found (optional - will skip welcome video)")
 
 # Test 3: Display test
 print("\n3. Testing display...")

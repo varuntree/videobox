@@ -26,12 +26,29 @@ VIDEO_PATHS = {
     2: "/home/varun/videobox/videos/grasshopper.mp4"   # grasshopper keyword
 }
 LISTENING_VIDEO = "/home/varun/videobox/videos/listening.mp4"
+WELCOME_VIDEO = "/home/varun/videobox/videos/welcome.mp4"
+
+# Background manager process
+background_process = None
 
 # Window mode flag (set False for fullscreen)
 WINDOW_MODE = True
 
 # Global process reference
 current_video = None
+
+def start_background_manager():
+    """Start persistent black background window"""
+    global background_process
+    try:
+        script_path = os.path.join(os.path.dirname(__file__), 'background_manager.py')
+        background_process = subprocess.Popen([sys.executable, script_path])
+        time.sleep(2)  # Give background time to initialize
+        print("✓ Background manager started")
+        return background_process
+    except Exception as e:
+        print(f"✗ Failed to start background manager: {e}")
+        return None
 
 def get_mpv_command(video_path, loop=False):
     """Build mpv command based on mode"""
@@ -45,8 +62,9 @@ def get_mpv_command(video_path, loop=False):
         '--vf=scale=800:480',   # Scale to smaller resolution
         '--no-correct-pts',     # Faster playback
         '--no-border',          # Remove window borders
-        '--ontop',              # Keep on top of other windows
+        '--ontop',              # Keep on top of background window
         '--no-keepaspect-window', # Don't maintain aspect ratio of window
+        '--geometry=800x480+0+0', # Position precisely
     ]
     
     if loop:
@@ -81,23 +99,70 @@ def stop_current_video():
         current_video = None
         # Removed sleep for faster transitions
 
+def play_welcome_video():
+    """Play welcome video once, then start listening"""
+    global current_video
+    if not os.path.exists(WELCOME_VIDEO):
+        print("No welcome video found, starting listening directly...")
+        return play_listening_video()
+        
+    print("Playing welcome video...")
+    current_video = subprocess.Popen(get_mpv_command(WELCOME_VIDEO, loop=False))
+    current_video.wait()  # Wait for welcome to finish
+    current_video = None
+    
+    # Immediately start listening animation for seamless transition
+    return play_listening_video()
+
+def seamless_transition_to_video(video_path):
+    """Play video with seamless transition (no desktop flash)"""
+    global current_video
+    
+    # Start new video immediately
+    new_process = subprocess.Popen(get_mpv_command(video_path, loop=False))
+    
+    # Give new video a moment to start rendering
+    time.sleep(0.1)
+    
+    # Now stop old video
+    if current_video and current_video.poll() is None:
+        current_video.terminate()
+        try:
+            current_video.wait(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            current_video.kill()
+            current_video.wait()
+    
+    current_video = new_process
+    return current_video
+
 def play_response_video(video_path):
     """Play a response video once, then return to listening"""
     global current_video
-    stop_current_video()
     print(f"Playing response video: {os.path.basename(video_path)}")
     
-    # Play response video and wait for completion
-    process = subprocess.Popen(get_mpv_command(video_path, loop=False))
-    process.wait()
+    # Seamless transition to response video
+    response_process = seamless_transition_to_video(video_path)
+    response_process.wait()  # Wait for response to finish
     
-    # Return to listening animation
+    # Seamless transition back to listening
     play_listening_video()
 
 def cleanup(signum=None, frame=None):
     """Clean shutdown handler"""
+    global background_process
     print("\nShutting down VoiceBox...")
     stop_current_video()
+    
+    # Stop background manager
+    if background_process and background_process.poll() is None:
+        background_process.terminate()
+        try:
+            background_process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            background_process.kill()
+            background_process.wait()
+    
     sys.exit(0)
 
 def main():
@@ -109,6 +174,9 @@ def main():
     print("VoiceBox Starting Up")
     print(f"Mode: {'Window' if WINDOW_MODE else 'Fullscreen'}")
     print("="*50)
+    
+    # Start background manager first (eliminates desktop flashes)
+    start_background_manager()
     
     # Verify access key
     if not ACCESS_KEY:
@@ -127,8 +195,8 @@ def main():
         print(f"✗ Failed to initialize Porcupine: {e}")
         sys.exit(1)
     
-    # Start listening animation
-    play_listening_video()
+    # Start with welcome video, then listening animation
+    play_welcome_video()
     
     # Audio callback for processing
     def audio_callback(indata, frames, time_info, status):
