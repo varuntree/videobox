@@ -21,11 +21,14 @@ class BackgroundManager:
         self.root.title("VoiceBox Background")
         self.root.configure(bg='black')
         self.root.attributes('-fullscreen', True)
-        self.root.attributes('-topmost', False)  # Videos will be on top
+        self.root.attributes('-topmost', True)  # Stay on top of desktop
         self.root.overrideredirect(True)  # Remove window decorations
         
         # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self.cleanup)
+        
+        # Resize after X is ready to fix black corner strip
+        self.root.after(100, lambda: self.root.geometry(f"{self.root.winfo_screenwidth()}x{self.root.winfo_screenheight()}+0+0"))
         
         # Keep window alive
         self.update_background()

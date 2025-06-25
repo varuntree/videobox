@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=VoiceBox
-Comment=Voice-Activated Video Display
-Exec=/home/varun/videobox/scripts/hide_desktop.sh
-Terminal=false
-Categories=AudioVideo;
-StartupNotify=false
-X-GNOME-Autostart-Delay=3

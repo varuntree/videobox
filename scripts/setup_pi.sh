@@ -19,7 +19,10 @@ sudo apt install -y \
     python3-venv \
     portaudio19-dev \
     libatlas-base-dev \
-    git
+    git \
+    xserver-xorg \
+    xinit \
+    unclutter
 
 # Create project directory
 echo "3. Setting up project directory..."
@@ -52,11 +55,28 @@ echo "7. Setting permissions..."
 chmod +x src/voicebox.py
 chmod +x src/test_hardware.py
 
+# Configure kiosk mode
+echo "8. Configuring kiosk mode..."
+# Disable LXDE autostart
+sudo systemctl disable lightdm.service 2>/dev/null || true
+rm -f ~/.config/autostart/voicebox.desktop 2>/dev/null || true
+sudo systemctl disable voicebox.service 2>/dev/null || true
+
+# Install kiosk configuration files
+cp config/.xinitrc ~/.xinitrc
+chmod +x ~/.xinitrc
+sudo cp config/voicebox-kiosk.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable voicebox-kiosk.service
+
 echo
 echo "=== Setup Complete ==="
 echo
 echo "Next steps:"
 echo "1. Edit .env and add your PICOVOICE_ACCESS_KEY"
 echo "2. Add your video files to the videos/ directory"
-echo "3. Run: ./venv/bin/python src/test_hardware.py"
-echo "4. Run: ./venv/bin/python src/voicebox.py"
+echo "3. Test: ./venv/bin/python src/test_hardware.py"
+echo "4. Reboot to start kiosk mode: sudo reboot"
+echo ""
+echo "The system will now boot directly into VoiceBox kiosk mode!"
+echo "No more desktop flashes or black corners!"

@@ -9,12 +9,45 @@ import sys
 import time
 import signal
 import os
+import json
+import socket
 import sounddevice as sd
 import pvporcupine
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
+
+class MPVController:
+    def __init__(self, socket_path="/tmp/mpvsocket"):
+        self.socket_path = socket_path
+
+    def _cmd(self, *args):
+        if not args:
+            return
+        msg = json.dumps({"command": list(args)}).encode("utf-8") + b"\n"
+        try:
+            with socket.socket(socket.AF_UNIX) as s:
+                s.connect(self.socket_path)
+                s.sendall(msg)
+        except Exception as e:
+            print(f"MPV command failed: {e}")
+
+    def load(self, path, loop=False):
+        self._cmd("loadfile", path, "replace")
+        self._cmd("set", "loop-file", "inf" if loop else "no")
+    
+    def get_property(self, prop):
+        try:
+            msg = json.dumps({"command": ["get_property", prop]}).encode("utf-8") + b"\n"
+            with socket.socket(socket.AF_UNIX) as s:
+                s.connect(self.socket_path)
+                s.sendall(msg)
+                response = s.recv(1024).decode("utf-8")
+                data = json.loads(response)
+                return data.get("data")
+        except Exception:
+            return None
 
 # Configuration
 ACCESS_KEY = os.getenv('PICOVOICE_ACCESS_KEY', '')
@@ -28,155 +61,90 @@ VIDEO_PATHS = {
 LISTENING_VIDEO = "/home/varun/videobox/videos/listening.mp4"
 WELCOME_VIDEO = "/home/varun/videobox/videos/welcome.mp4"
 
-# Background manager process
-background_process = None
+# Global process references
+mpv_process = None
+mpv_controller = None
 
-# Window mode flag (set False for fullscreen)
-WINDOW_MODE = True
+def start_mpv():
+    """Start a single persistent mpv window with IPC."""
+    socket_path = "/tmp/mpvsocket"
+    if os.path.exists(socket_path):
+        os.remove(socket_path)
 
-# Global process reference
-current_video = None
-
-def start_background_manager():
-    """Start persistent black background window"""
-    global background_process
-    try:
-        script_path = os.path.join(os.path.dirname(__file__), 'background_manager.py')
-        background_process = subprocess.Popen([sys.executable, script_path])
-        time.sleep(2)  # Give background time to initialize
-        print("✓ Background manager started")
-        return background_process
-    except Exception as e:
-        print(f"✗ Failed to start background manager: {e}")
-        return None
-
-def get_mpv_command(video_path, loop=False):
-    """Build mpv command based on mode"""
     cmd = [
-        'mpv',
-        '--vo=gpu',             # Use GPU video output
-        '--hwdec=no',           # Disable hardware acceleration (more stable)
-        '--really-quiet',
-        '--no-osc',             # No on-screen controller
-        '--no-input-default-bindings',  # Disable keyboard shortcuts
-        '--vf=scale=800:480',   # Scale to smaller resolution
-        '--no-correct-pts',     # Faster playback
-        '--no-border',          # Remove window borders
-        '--ontop',              # Keep on top of background window
-        '--no-keepaspect-window', # Don't maintain aspect ratio of window
-        '--geometry=800x480+0+0', # Position precisely
+        "mpv",
+        "--force-window=yes",
+        "--idle=yes",
+        "--ontop",
+        "--no-border",
+        "--geometry=800x480+0+0",
+        "--no-osc",
+        "--no-input-default-bindings",
+        "--input-ipc-server=" + socket_path,
+        "--vo=gpu",
+        "--no-keepaspect-window",
+        "--no-keepaspect",
+        "--fullscreen",
+        "--really-quiet"
     ]
-    
-    if loop:
-        cmd.append('--loop-file=inf')
-    
-    if WINDOW_MODE:
-        cmd.extend(['--geometry=800x480', '--title=VoiceBox'])
-    else:
-        cmd.extend(['--fullscreen', '--fs'])
-    
-    cmd.append(video_path)
-    return cmd
+    return subprocess.Popen(cmd), MPVController(socket_path)
 
 def play_listening_video():
     """Start playing the listening animation in a loop"""
-    global current_video
-    stop_current_video()
+    global mpv_controller
     print("Starting listening animation...")
-    current_video = subprocess.Popen(get_mpv_command(LISTENING_VIDEO, loop=True))
-    return current_video
-
-def stop_current_video():
-    """Stop any currently playing video"""
-    global current_video
-    if current_video and current_video.poll() is None:
-        current_video.terminate()
-        try:
-            current_video.wait(timeout=1)  # Reduced timeout for faster transitions
-        except subprocess.TimeoutExpired:
-            current_video.kill()
-            current_video.wait()
-        current_video = None
-        # Removed sleep for faster transitions
+    mpv_controller.load(LISTENING_VIDEO, loop=True)
 
 def play_welcome_video():
     """Play welcome video once, then start listening"""
-    global current_video
+    global mpv_controller
     if not os.path.exists(WELCOME_VIDEO):
         print("No welcome video found, starting listening directly...")
         return play_listening_video()
         
     print("Playing welcome video...")
-    current_video = subprocess.Popen(get_mpv_command(WELCOME_VIDEO, loop=False))
-    current_video.wait()  # Wait for welcome to finish
-    current_video = None
+    mpv_controller.load(WELCOME_VIDEO, loop=False)
     
-    # Immediately start listening animation for seamless transition
-    return play_listening_video()
-
-def seamless_transition_to_video(video_path):
-    """Play video with seamless transition (no desktop flash)"""
-    global current_video
-    
-    # Start new video immediately
-    new_process = subprocess.Popen(get_mpv_command(video_path, loop=False))
-    
-    # Give new video a moment to start rendering
-    time.sleep(0.1)
-    
-    # Now stop old video
-    if current_video and current_video.poll() is None:
-        current_video.terminate()
-        try:
-            current_video.wait(timeout=0.5)
-        except subprocess.TimeoutExpired:
-            current_video.kill()
-            current_video.wait()
-    
-    current_video = new_process
-    return current_video
+    # Will transition to listening in main loop when video ends
+    return True
 
 def play_response_video(video_path):
     """Play a response video once, then return to listening"""
-    global current_video
+    global mpv_controller
     print(f"Playing response video: {os.path.basename(video_path)}")
-    
-    # Seamless transition to response video
-    response_process = seamless_transition_to_video(video_path)
-    response_process.wait()  # Wait for response to finish
-    
-    # Seamless transition back to listening
-    play_listening_video()
+    mpv_controller.load(video_path, loop=False)
+    # Will transition back to listening in main loop when video ends
 
 def cleanup(signum=None, frame=None):
     """Clean shutdown handler"""
-    global background_process
+    global mpv_process
     print("\nShutting down VoiceBox...")
-    stop_current_video()
     
-    # Stop background manager
-    if background_process and background_process.poll() is None:
-        background_process.terminate()
+    # Stop mpv process
+    if mpv_process and mpv_process.poll() is None:
+        mpv_process.terminate()
         try:
-            background_process.wait(timeout=2)
+            mpv_process.wait(timeout=2)
         except subprocess.TimeoutExpired:
-            background_process.kill()
-            background_process.wait()
+            mpv_process.kill()
+            mpv_process.wait()
     
     sys.exit(0)
 
 def main():
+    global mpv_process, mpv_controller
+    
     # Set up signal handlers
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
     
     print("="*50)
-    print("VoiceBox Starting Up")
-    print(f"Mode: {'Window' if WINDOW_MODE else 'Fullscreen'}")
+    print("VoiceBox Starting Up (Kiosk Mode)")
     print("="*50)
     
-    # Start background manager first (eliminates desktop flashes)
-    start_background_manager()
+    # Start persistent mpv with IPC
+    mpv_process, mpv_controller = start_mpv()
+    time.sleep(1)  # Give mpv time to initialize
     
     # Verify access key
     if not ACCESS_KEY:
@@ -237,9 +205,16 @@ def main():
             while True:
                 time.sleep(1)
                 
-                # Auto-restart if video crashes
-                if current_video and current_video.poll() is not None:
-                    print("Video stopped unexpectedly, restarting...")
+                # Check if response video finished, return to listening
+                eof = mpv_controller.get_property("eof-reached")
+                if eof:
+                    play_listening_video()
+                
+                # Auto-restart mpv if it crashes
+                if mpv_process and mpv_process.poll() is not None:
+                    print("MPV stopped unexpectedly, restarting...")
+                    mpv_process, mpv_controller = start_mpv()
+                    time.sleep(1)
                     play_listening_video()
                     
     except Exception as e:
@@ -249,8 +224,4 @@ def main():
         cleanup()
 
 if __name__ == "__main__":
-    # Check if running in test mode
-    if len(sys.argv) > 1 and sys.argv[1] == '--fullscreen':
-        WINDOW_MODE = False
-    
     main()
