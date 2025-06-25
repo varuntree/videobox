@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-VoiceBox - Voice-Activated Video Display
-Continuously plays listening animation, responds to voice commands
+VoiceBox - Voice-Activated Video Display (Vosk Version)
+Continuously plays listening animation, responds to any spoken video filename
 """
 
 import subprocess
@@ -11,9 +11,12 @@ import signal
 import os
 import json
 import socket
+import threading
 import sounddevice as sd
-import pvporcupine
+import vosk
+import numpy as np
 from dotenv import load_dotenv
+from video_discovery import VideoDiscovery
 
 # Load environment variables
 load_dotenv()
@@ -50,20 +53,20 @@ class MPVController:
             return None
 
 # Configuration
-ACCESS_KEY = os.getenv('PICOVOICE_ACCESS_KEY', '')
-# Using built-in wake words - no .ppn files needed!
-WAKE_WORDS = ['americano', 'bumblebee', 'grasshopper']
-VIDEO_PATHS = {
-    0: "/home/varun/videobox/videos/americano.mp4",    # americano keyword
-    1: "/home/varun/videobox/videos/bumblebee.mp4",    # bumblebee keyword
-    2: "/home/varun/videobox/videos/grasshopper.mp4"   # grasshopper keyword
-}
+VOSK_MODEL_PATH = os.getenv('VOSK_MODEL_PATH', '/home/varun/videobox/models/vosk-model-en-us-small')
+MIN_CONFIDENCE = float(os.getenv('MIN_CONFIDENCE', '0.7'))
+
+# Video paths
 LISTENING_VIDEO = "/home/varun/videobox/videos/listening.mp4"
 WELCOME_VIDEO = "/home/varun/videobox/videos/welcome.mp4"
 
-# Global process references
+# Global variables
 mpv_process = None
 mpv_controller = None
+available_videos = {}
+video_discovery = None
+last_video_scan = 0
+is_listening = True
 
 def start_mpv():
     """Start a single persistent mpv window with IPC."""
@@ -89,38 +92,80 @@ def start_mpv():
     ]
     return subprocess.Popen(cmd), MPVController(socket_path)
 
+def rescan_videos():
+    """Rescan for available videos"""
+    global available_videos, last_video_scan
+    
+    print("Rescanning for videos...")
+    available_videos = video_discovery.get_all_videos()
+    last_video_scan = time.time()
+    
+    print(f"Found {len(available_videos)} command videos:")
+    for command, path in available_videos.items():
+        print(f"  '{command}' -> {os.path.basename(path)}")
+    
+    return available_videos
+
 def play_listening_video():
     """Start playing the listening animation in a loop"""
-    global mpv_controller
+    global mpv_controller, is_listening
     print("Starting listening animation...")
     mpv_controller.load(LISTENING_VIDEO, loop=True)
+    is_listening = True
 
 def play_welcome_video():
     """Play welcome video once, then start listening"""
-    global mpv_controller
+    global mpv_controller, is_listening
     if not os.path.exists(WELCOME_VIDEO):
         print("No welcome video found, starting listening directly...")
         return play_listening_video()
         
     print("Playing welcome video...")
     mpv_controller.load(WELCOME_VIDEO, loop=False)
-    
-    # Will transition to listening in main loop when video ends
+    is_listening = False
     return True
 
 def play_response_video(video_path):
     """Play a response video once, then return to listening"""
-    global mpv_controller
+    global mpv_controller, is_listening
     print(f"Playing response video: {os.path.basename(video_path)}")
     mpv_controller.load(video_path, loop=False)
-    # Will transition back to listening in main loop when video ends
+    is_listening = False
+
+def process_speech_result(result_text):
+    """Process recognized speech and find matching video"""
+    global available_videos
+    
+    if not result_text or not result_text.strip():
+        return
+        
+    # Convert to lowercase for matching
+    spoken_text = result_text.lower().strip()
+    print(f"Recognized: '{spoken_text}'")
+    
+    # Check for exact matches first
+    if spoken_text in available_videos:
+        video_path = available_videos[spoken_text]
+        if os.path.exists(video_path):
+            play_response_video(video_path)
+            return True
+    
+    # Check for partial matches
+    for command, video_path in available_videos.items():
+        if command in spoken_text or spoken_text in command:
+            print(f"Partial match: '{spoken_text}' -> '{command}'")
+            if os.path.exists(video_path):
+                play_response_video(video_path)
+                return True
+    
+    print(f"No video found for: '{spoken_text}'")
+    return False
 
 def cleanup(signum=None, frame=None):
     """Clean shutdown handler"""
     global mpv_process
     print("\nShutting down VoiceBox...")
     
-    # Stop mpv process
     if mpv_process and mpv_process.poll() is None:
         mpv_process.terminate()
         try:
@@ -131,96 +176,126 @@ def cleanup(signum=None, frame=None):
     
     sys.exit(0)
 
+def periodic_video_scan():
+    """Periodically rescan for new videos (runs in background)"""
+    global last_video_scan
+    
+    while True:
+        try:
+            time.sleep(30)  # Check every 30 seconds
+            
+            # Only rescan if it's been a while
+            if time.time() - last_video_scan > 30:
+                rescan_videos()
+                
+        except Exception as e:
+            print(f"Error in periodic scan: {e}")
+            time.sleep(60)
+
 def main():
-    global mpv_process, mpv_controller
+    global mpv_process, mpv_controller, video_discovery
     
     # Set up signal handlers
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
     
     print("="*50)
-    print("VoiceBox Starting Up (Kiosk Mode)")
+    print("VoiceBox Starting Up (Vosk Version)")
     print("="*50)
+    
+    # Initialize video discovery
+    video_discovery = VideoDiscovery()
     
     # Start persistent mpv with IPC
     mpv_process, mpv_controller = start_mpv()
-    time.sleep(1)  # Give mpv time to initialize
+    time.sleep(1)
     
-    # Verify access key
-    if not ACCESS_KEY:
-        print("ERROR: No Picovoice access key found!")
-        print("Set PICOVOICE_ACCESS_KEY in .env file")
+    # Initialize Vosk
+    if not os.path.exists(VOSK_MODEL_PATH):
+        print(f"ERROR: Vosk model not found at {VOSK_MODEL_PATH}")
+        print("Run the model download step from the migration guide")
         sys.exit(1)
     
-    # Initialize Porcupine with built-in keywords
     try:
-        porcupine = pvporcupine.create(
-            access_key=ACCESS_KEY,
-            keywords=WAKE_WORDS  # Using built-in keywords!
-        )
-        print("✓ Porcupine initialized with built-in keywords")
+        print("Loading Vosk model...")
+        vosk.SetLogLevel(-1)  # Reduce Vosk logging
+        model = vosk.Model(VOSK_MODEL_PATH)
+        rec = vosk.KaldiRecognizer(model, 16000)
+        rec.SetMaxAlternatives(3)  # Get multiple possibilities
+        print("✓ Vosk model loaded successfully")
     except Exception as e:
-        print(f"✗ Failed to initialize Porcupine: {e}")
+        print(f"✗ Failed to initialize Vosk: {e}")
         sys.exit(1)
     
-    # Start with welcome video, then listening animation
+    # Initial video scan
+    rescan_videos()
+    
+    # Start background video scanning
+    scan_thread = threading.Thread(target=periodic_video_scan, daemon=True)
+    scan_thread.start()
+    
+    # Start with welcome video
     play_welcome_video()
     
-    # Audio callback for processing
+    # Audio callback for Vosk processing
     def audio_callback(indata, frames, time_info, status):
         if status:
             print(f"Audio error: {status}")
         
-        # Convert to int16 for Porcupine
-        audio_frame = (indata[:, 0] * 32767).astype('int16')
+        # Convert to int16 for Vosk
+        audio_data = (indata[:, 0] * 32767).astype(np.int16).tobytes()
         
-        # Process audio
-        keyword_index = porcupine.process(audio_frame)
-        
-        if keyword_index >= 0:
-            keyword_name = WAKE_WORDS[keyword_index]
-            print(f"\n*** Detected: '{keyword_name}' ***")
+        # Process with Vosk
+        if rec.AcceptWaveform(audio_data):
+            # Final result
+            result = json.loads(rec.Result())
+            text = result.get('text', '')
+            confidence = result.get('confidence', 0)
             
-            video_path = VIDEO_PATHS.get(keyword_index)
-            if video_path and os.path.exists(video_path):
-                play_response_video(video_path)
-            else:
-                print(f"Warning: Video not found: {video_path}")
+            if text and confidence >= MIN_CONFIDENCE:
+                process_speech_result(text)
+        else:
+            # Partial result (optional - for debugging)
+            partial = json.loads(rec.PartialResult())
+            partial_text = partial.get('partial', '')
+            if partial_text and len(partial_text) > 10:  # Only show longer partial results
+                print(f"Listening: {partial_text}")
     
     # Start audio stream
     try:
         print("✓ Starting audio stream")
-        wake_words_list = ', '.join([f"'{word}'" for word in WAKE_WORDS])
-        print(f"\nListening for: {wake_words_list}")
+        print(f"Available commands: {list(available_videos.keys())}")
+        print("Speak any video filename to play it!")
         print("Press Ctrl+C to stop\n")
         
         with sd.InputStream(
-            samplerate=porcupine.sample_rate,
-            blocksize=porcupine.frame_length,
+            samplerate=16000,
+            blocksize=1600,  # 0.1 second blocks
             dtype='float32',
             channels=1,
             callback=audio_callback
         ):
-            # Monitor loop
+            # Main monitoring loop
             while True:
                 time.sleep(1)
                 
                 # Check if response video finished, return to listening
-                eof = mpv_controller.get_property("eof-reached")
-                if eof:
-                    play_listening_video()
+                if not is_listening:
+                    eof = mpv_controller.get_property("eof-reached")
+                    if eof:
+                        play_listening_video()
                 
                 # Auto-restart mpv if it crashes
                 if mpv_process and mpv_process.poll() is not None:
                     print("MPV stopped unexpectedly, restarting...")
                     mpv_process, mpv_controller = start_mpv()
                     time.sleep(1)
-                    play_listening_video()
+                    if is_listening:
+                        play_listening_video()
                     
     except Exception as e:
         print(f"Error: {e}")
     finally:
-        porcupine.delete()
         cleanup()
 
 if __name__ == "__main__":

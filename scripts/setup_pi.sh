@@ -1,9 +1,9 @@
 #!/bin/bash
-# Setup script for Raspberry Pi
+# Updated setup script for Vosk version
 
 set -e
 
-echo "=== VoiceBox Pi Setup ==="
+echo "=== VoiceBox Pi Setup (Vosk Version) ==="
 echo
 
 # Update system
@@ -22,32 +22,49 @@ sudo apt install -y \
     git \
     xserver-xorg \
     xinit \
-    unclutter
-
-# Create project directory
-echo "3. Setting up project directory..."
-cd /home/varun
-if [ ! -d "videobox" ]; then
-    echo "   Creating videobox directory..."
-    mkdir -p videobox
-fi
+    unclutter \
+    wget \
+    unzip \
+    udev
 
 # Set up Python virtual environment
-echo "4. Setting up Python environment..."
+echo "3. Setting up Python environment..."
 cd /home/varun/videobox
 python3 -m venv venv
 source venv/bin/activate
 
 # Install Python packages
-echo "5. Installing Python packages..."
+echo "4. Installing Python packages..."
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# Create .env file if not exists
+# Download Vosk model if not exists
+echo "5. Setting up Vosk model..."
+if [ ! -d "models/vosk-model-en-us-small" ]; then
+    mkdir -p models
+    cd models
+    echo "   Downloading Vosk model (50MB)..."
+    wget -q https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+    unzip -q vosk-model-small-en-us-0.15.zip
+    mv vosk-model-small-en-us-0.15 vosk-model-en-us-small
+    rm vosk-model-small-en-us-0.15.zip
+    cd ..
+    echo "   ✓ Vosk model installed"
+else
+    echo "   ✓ Vosk model already exists"
+fi
+
+# Create .env file
+echo "6. Setting up configuration..."
 if [ ! -f ".env" ]; then
-    echo "6. Creating .env file..."
-    cp .env.example .env
-    echo "   ⚠️  Add your PICOVOICE_ACCESS_KEY to .env file!"
+    cat > .env << 'EOF'
+VOSK_MODEL_PATH=/home/varun/videobox/models/vosk-model-en-us-small
+USB_MOUNT_POINT=/media/usb
+MIN_CONFIDENCE=0.7
+EOF
+    echo "   ✓ Created .env file"
+else
+    echo "   ✓ .env file already exists"
 fi
 
 # Set permissions
@@ -73,10 +90,9 @@ echo
 echo "=== Setup Complete ==="
 echo
 echo "Next steps:"
-echo "1. Edit .env and add your PICOVOICE_ACCESS_KEY"
-echo "2. Add your video files to the videos/ directory"
-echo "3. Test: ./venv/bin/python src/test_hardware.py"
-echo "4. Reboot to start kiosk mode: sudo reboot"
-echo ""
-echo "The system will now boot directly into VoiceBox kiosk mode!"
-echo "No more desktop flashes or black corners!"
+echo "1. Add video files to videos/ directory or USB drive"
+echo "2. Test: ./venv/bin/python src/test_hardware.py"
+echo "3. Run: ./venv/bin/python src/voicebox.py"
+echo "4. For production: sudo reboot (will auto-start kiosk mode)"
+echo
+echo "Now supports any spoken filename as a voice command!"
