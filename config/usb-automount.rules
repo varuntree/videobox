@@ -1,0 +1,12 @@
+# Udev rules for USB auto-mounting
+# Place in /etc/udev/rules.d/99-usb-automount.rules
+
+# Auto-mount USB storage devices
+KERNEL=="sd[a-z]*", SUBSYSTEM=="block", ENV{ID_FS_TYPE}!="", \
+  RUN+="/bin/mkdir -p /media/usb%n", \
+  RUN+="/bin/mount -o uid=varun,gid=varun /dev/%k /media/usb%n"
+
+# Auto-unmount on removal
+KERNEL=="sd[a-z]*", SUBSYSTEM=="block", ACTION=="remove", \
+  RUN+="/bin/umount /media/usb%n", \
+  RUN+="/bin/rmdir /media/usb%n"

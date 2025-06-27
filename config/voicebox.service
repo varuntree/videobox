@@ -1,21 +1,25 @@
 [Unit]
-Description=VoiceBox Voice-Activated Video Display
-After=graphical.target
+Description=VoiceBox Dynamic Voice Recognition System
+After=graphical.target sound.service
+Wants=sound.service
 
 [Service]
 Type=simple
 User=varun
 Group=varun
-WorkingDirectory=/home/varun/videobox
+WorkingDirectory=/home/varun/voicebox
 Environment="DISPLAY=:0"
-Environment="XAUTHORITY=/home/varun/.Xauthority"
-Environment="HOME=/home/varun"
-Environment="PATH=/home/varun/videobox/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=/home/varun/videobox/venv/bin/python /home/varun/videobox/src/voicebox.py --fullscreen
+Environment="PULSE_RUNTIME_PATH=/run/user/1000/pulse"
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
+ExecStart=/home/varun/voicebox/venv/bin/python /home/varun/voicebox/src/voicebox.py
 Restart=always
-RestartSec=5
+RestartSec=10
 StandardOutput=journal
 StandardError=journal
+
+# Resource limits
+MemoryMax=512M
+CPUQuota=80%
 
 [Install]
 WantedBy=graphical.target

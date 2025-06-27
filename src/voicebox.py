@@ -1,302 +1,216 @@
 #!/usr/bin/env python3
 """
-VoiceBox - Voice-Activated Video Display (Vosk Version)
-Continuously plays listening animation, responds to any spoken video filename
+VoiceBox - Dynamic Voice-Activated Video Display
+Recognizes any spoken filename and plays corresponding videos
 """
 
-import subprocess
+import signal
 import sys
 import time
-import signal
-import os
-import json
-import socket
 import threading
-import sounddevice as sd
-import vosk
-import numpy as np
+from pathlib import Path
 from dotenv import load_dotenv
+
 from video_discovery import VideoDiscovery
+from voice_processor import VoiceProcessor
+from display_manager import DisplayManager
 
-# Load environment variables
-load_dotenv()
-
-class MPVController:
-    def __init__(self, socket_path="/tmp/mpvsocket"):
-        self.socket_path = socket_path
-
-    def _cmd(self, *args):
-        if not args:
+class VoiceBox:
+    def __init__(self):
+        load_dotenv()
+        
+        # Initialize components
+        self.video_discovery = VideoDiscovery()
+        self.voice_processor = VoiceProcessor()
+        self.display_manager = DisplayManager()
+        
+        # State management
+        self.available_videos = {}
+        self.is_running = True
+        self.current_state = "startup"
+        
+        # Setup signal handlers
+        signal.signal(signal.SIGINT, self.shutdown)
+        signal.signal(signal.SIGTERM, self.shutdown)
+    
+    def startup_sequence(self):
+        """System startup and initialization"""
+        print("="*50)
+        print("VoiceBox Dynamic System Starting")
+        print("="*50)
+        
+        # Initialize display
+        self.display_manager.initialize()
+        
+        # Play welcome video
+        if self.display_manager.has_welcome_video():
+            print("Playing welcome message...")
+            self.display_manager.play_welcome()
+            time.sleep(3)  # Welcome video duration
+        
+        # Initialize voice recognition
+        self.voice_processor.initialize()
+        
+        # Scan for videos
+        self.refresh_video_library()
+        
+        # Start listening mode
+        self.enter_listening_mode()
+    
+    def refresh_video_library(self):
+        """Scan and update available video library"""
+        print("Scanning for videos...")
+        self.available_videos = self.video_discovery.get_all_videos()
+        
+        video_count = len(self.available_videos)
+        print(f"Found {video_count} voice commands:")
+        
+        for command, video_path in self.available_videos.items():
+            video_name = Path(video_path).name
+            source = "USB" if "/media/" in video_path else "Local"
+            print(f"  '{command}' -> {video_name} ({source})")
+        
+        return self.available_videos
+    
+    def enter_listening_mode(self):
+        """Enter continuous listening state"""
+        print("\nEntering listening mode...")
+        self.current_state = "listening"
+        self.display_manager.play_listening_animation()
+        
+        # Start voice processing
+        self.voice_processor.start_listening(self.on_voice_command)
+        
+        print("Ready! Speak any video filename to play it.")
+        if self.available_videos:
+            commands = list(self.available_videos.keys())[:5]  # Show first 5
+            print(f"Try saying: {', '.join(commands)}")
+    
+    def on_voice_command(self, recognized_text, confidence):
+        """Handle recognized voice command"""
+        if not recognized_text or confidence < 0.7:
             return
-        msg = json.dumps({"command": list(args)}).encode("utf-8") + b"\n"
-        try:
-            with socket.socket(socket.AF_UNIX) as s:
-                s.connect(self.socket_path)
-                s.sendall(msg)
-        except Exception as e:
-            print(f"MPV command failed: {e}")
-
-    def load(self, path, loop=False):
-        self._cmd("loadfile", path, "replace")
-        self._cmd("set", "loop-file", "inf" if loop else "no")
-    
-    def get_property(self, prop):
-        try:
-            msg = json.dumps({"command": ["get_property", prop]}).encode("utf-8") + b"\n"
-            with socket.socket(socket.AF_UNIX) as s:
-                s.connect(self.socket_path)
-                s.sendall(msg)
-                response = s.recv(1024).decode("utf-8")
-                data = json.loads(response)
-                return data.get("data")
-        except Exception:
-            return None
-
-# Configuration
-VOSK_MODEL_PATH = os.getenv('VOSK_MODEL_PATH', '/home/varun/videobox/models/vosk-model-en-us-small')
-MIN_CONFIDENCE = float(os.getenv('MIN_CONFIDENCE', '0.7'))
-
-# Video paths
-LISTENING_VIDEO = "/home/varun/videobox/videos/listening.mp4"
-WELCOME_VIDEO = "/home/varun/videobox/videos/welcome.mp4"
-
-# Global variables
-mpv_process = None
-mpv_controller = None
-available_videos = {}
-video_discovery = None
-last_video_scan = 0
-is_listening = True
-
-def start_mpv():
-    """Start a single persistent mpv window with IPC."""
-    socket_path = "/tmp/mpvsocket"
-    if os.path.exists(socket_path):
-        os.remove(socket_path)
-
-    cmd = [
-        "mpv",
-        "--force-window=yes",
-        "--idle=yes",
-        "--ontop",
-        "--no-border",
-        "--geometry=800x480+0+0",
-        "--no-osc",
-        "--no-input-default-bindings",
-        "--input-ipc-server=" + socket_path,
-        "--vo=gpu",
-        "--no-keepaspect-window",
-        "--no-keepaspect",
-        "--fullscreen",
-        "--really-quiet"
-    ]
-    return subprocess.Popen(cmd), MPVController(socket_path)
-
-def rescan_videos():
-    """Rescan for available videos"""
-    global available_videos, last_video_scan
-    
-    print("Rescanning for videos...")
-    available_videos = video_discovery.get_all_videos()
-    last_video_scan = time.time()
-    
-    print(f"Found {len(available_videos)} command videos:")
-    for command, path in available_videos.items():
-        print(f"  '{command}' -> {os.path.basename(path)}")
-    
-    return available_videos
-
-def play_listening_video():
-    """Start playing the listening animation in a loop"""
-    global mpv_controller, is_listening
-    print("Starting listening animation...")
-    mpv_controller.load(LISTENING_VIDEO, loop=True)
-    is_listening = True
-
-def play_welcome_video():
-    """Play welcome video once, then start listening"""
-    global mpv_controller, is_listening
-    if not os.path.exists(WELCOME_VIDEO):
-        print("No welcome video found, starting listening directly...")
-        return play_listening_video()
         
-    print("Playing welcome video...")
-    mpv_controller.load(WELCOME_VIDEO, loop=False)
-    is_listening = False
-    return True
-
-def play_response_video(video_path):
-    """Play a response video once, then return to listening"""
-    global mpv_controller, is_listening
-    print(f"Playing response video: {os.path.basename(video_path)}")
-    mpv_controller.load(video_path, loop=False)
-    is_listening = False
-
-def process_speech_result(result_text):
-    """Process recognized speech and find matching video"""
-    global available_videos
-    
-    if not result_text or not result_text.strip():
-        return
+        print(f"\nRecognized: '{recognized_text}' (confidence: {confidence:.2f})")
         
-    # Convert to lowercase for matching
-    spoken_text = result_text.lower().strip()
-    print(f"Recognized: '{spoken_text}'")
-    
-    # Check for exact matches first
-    if spoken_text in available_videos:
-        video_path = available_videos[spoken_text]
-        if os.path.exists(video_path):
-            play_response_video(video_path)
-            return True
-    
-    # Check for partial matches
-    for command, video_path in available_videos.items():
-        if command in spoken_text or spoken_text in command:
-            print(f"Partial match: '{spoken_text}' -> '{command}'")
-            if os.path.exists(video_path):
-                play_response_video(video_path)
-                return True
-    
-    print(f"No video found for: '{spoken_text}'")
-    return False
-
-def cleanup(signum=None, frame=None):
-    """Clean shutdown handler"""
-    global mpv_process
-    print("\nShutting down VoiceBox...")
-    
-    if mpv_process and mpv_process.poll() is None:
-        mpv_process.terminate()
-        try:
-            mpv_process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            mpv_process.kill()
-            mpv_process.wait()
-    
-    sys.exit(0)
-
-def periodic_video_scan():
-    """Periodically rescan for new videos (runs in background)"""
-    global last_video_scan
-    
-    while True:
-        try:
-            time.sleep(30)  # Check every 30 seconds
-            
-            # Only rescan if it's been a while
-            if time.time() - last_video_scan > 30:
-                rescan_videos()
-                
-        except Exception as e:
-            print(f"Error in periodic scan: {e}")
-            time.sleep(60)
-
-def main():
-    global mpv_process, mpv_controller, video_discovery
-    
-    # Set up signal handlers
-    signal.signal(signal.SIGINT, cleanup)
-    signal.signal(signal.SIGTERM, cleanup)
-    
-    print("="*50)
-    print("VoiceBox Starting Up (Vosk Version)")
-    print("="*50)
-    
-    # Initialize video discovery
-    video_discovery = VideoDiscovery()
-    
-    # Start persistent mpv with IPC
-    mpv_process, mpv_controller = start_mpv()
-    time.sleep(1)
-    
-    # Initialize Vosk
-    if not os.path.exists(VOSK_MODEL_PATH):
-        print(f"ERROR: Vosk model not found at {VOSK_MODEL_PATH}")
-        print("Run the model download step from the migration guide")
-        sys.exit(1)
-    
-    try:
-        print("Loading Vosk model...")
-        vosk.SetLogLevel(-1)  # Reduce Vosk logging
-        model = vosk.Model(VOSK_MODEL_PATH)
-        rec = vosk.KaldiRecognizer(model, 16000)
-        rec.SetMaxAlternatives(3)  # Get multiple possibilities
-        print("✓ Vosk model loaded successfully")
-    except Exception as e:
-        print(f"✗ Failed to initialize Vosk: {e}")
-        sys.exit(1)
-    
-    # Initial video scan
-    rescan_videos()
-    
-    # Start background video scanning
-    scan_thread = threading.Thread(target=periodic_video_scan, daemon=True)
-    scan_thread.start()
-    
-    # Start with welcome video
-    play_welcome_video()
-    
-    # Audio callback for Vosk processing
-    def audio_callback(indata, frames, time_info, status):
-        if status:
-            print(f"Audio error: {status}")
+        # Find matching video
+        video_path = self.find_matching_video(recognized_text)
         
-        # Convert to int16 for Vosk
-        audio_data = (indata[:, 0] * 32767).astype(np.int16).tobytes()
-        
-        # Process with Vosk
-        if rec.AcceptWaveform(audio_data):
-            # Final result
-            result = json.loads(rec.Result())
-            text = result.get('text', '')
-            confidence = result.get('confidence', 0)
-            
-            if text and confidence >= MIN_CONFIDENCE:
-                process_speech_result(text)
+        if video_path:
+            self.play_response_video(video_path)
         else:
-            # Partial result (optional - for debugging)
-            partial = json.loads(rec.PartialResult())
-            partial_text = partial.get('partial', '')
-            if partial_text and len(partial_text) > 10:  # Only show longer partial results
-                print(f"Listening: {partial_text}")
+            print(f"No video found for: '{recognized_text}'")
+            # Could play "not found" audio here
     
-    # Start audio stream
-    try:
-        print("✓ Starting audio stream")
-        print(f"Available commands: {list(available_videos.keys())}")
-        print("Speak any video filename to play it!")
-        print("Press Ctrl+C to stop\n")
+    def find_matching_video(self, spoken_text):
+        """Find best matching video for spoken command"""
+        spoken_lower = spoken_text.lower().strip()
         
-        with sd.InputStream(
-            samplerate=16000,
-            blocksize=1600,  # 0.1 second blocks
-            dtype='float32',
-            channels=1,
-            callback=audio_callback
-        ):
-            # Main monitoring loop
-            while True:
+        # Exact match first
+        if spoken_lower in self.available_videos:
+            return self.available_videos[spoken_lower]
+        
+        # Partial matches
+        for command, video_path in self.available_videos.items():
+            if command in spoken_lower or spoken_lower in command:
+                print(f"Partial match: '{spoken_text}' -> '{command}'")
+                return video_path
+        
+        # Fuzzy matching (optional enhancement)
+        return self.fuzzy_match(spoken_lower)
+    
+    def fuzzy_match(self, spoken_text, threshold=0.6):
+        """Fuzzy string matching for better recognition"""
+        import difflib
+        
+        commands = list(self.available_videos.keys())
+        matches = difflib.get_close_matches(
+            spoken_text, commands, n=1, cutoff=threshold
+        )
+        
+        if matches:
+            matched_command = matches[0]
+            print(f"Fuzzy match: '{spoken_text}' -> '{matched_command}'")
+            return self.available_videos[matched_command]
+        
+        return None
+    
+    def play_response_video(self, video_path):
+        """Play customer video, then return to listening"""
+        self.current_state = "playing_response"
+        
+        video_name = Path(video_path).name
+        print(f"Playing: {video_name}")
+        
+        # Play the video
+        self.display_manager.play_video(video_path)
+        
+        # Monitor for completion
+        self.monitor_video_completion()
+    
+    def monitor_video_completion(self):
+        """Monitor video playback and return to listening when done"""
+        def check_completion():
+            while self.current_state == "playing_response":
+                if self.display_manager.is_video_finished():
+                    print("Video finished, returning to listening...")
+                    self.enter_listening_mode()
+                    break
+                time.sleep(0.5)
+        
+        # Run in background thread
+        threading.Thread(target=check_completion, daemon=True).start()
+    
+    def run(self):
+        """Main application loop"""
+        try:
+            self.startup_sequence()
+            
+            # Background video library refresh
+            def periodic_refresh():
+                while self.is_running:
+                    time.sleep(30)  # Check every 30 seconds
+                    if self.current_state == "listening":
+                        old_count = len(self.available_videos)
+                        self.refresh_video_library()
+                        new_count = len(self.available_videos)
+                        if new_count != old_count:
+                            print(f"Video library updated: {new_count} videos available")
+            
+            refresh_thread = threading.Thread(target=periodic_refresh, daemon=True)
+            refresh_thread.start()
+            
+            # Main loop
+            while self.is_running:
                 time.sleep(1)
                 
-                # Check if response video finished, return to listening
-                if not is_listening:
-                    eof = mpv_controller.get_property("eof-reached")
-                    if eof:
-                        play_listening_video()
-                
-                # Auto-restart mpv if it crashes
-                if mpv_process and mpv_process.poll() is not None:
-                    print("MPV stopped unexpectedly, restarting...")
-                    mpv_process, mpv_controller = start_mpv()
-                    time.sleep(1)
-                    if is_listening:
-                        play_listening_video()
-                    
-    except Exception as e:
-        print(f"Error: {e}")
-    finally:
-        cleanup()
+                # Health checks
+                if not self.display_manager.is_healthy():
+                    print("Display manager unhealthy, restarting...")
+                    self.display_manager.restart()
+        
+        except KeyboardInterrupt:
+            self.shutdown()
+        except Exception as e:
+            print(f"System error: {e}")
+            self.shutdown(1)
+    
+    def shutdown(self, exit_code=0):
+        """Clean system shutdown"""
+        print("\nShutting down VoiceBox...")
+        self.is_running = False
+        
+        # Stop components
+        self.voice_processor.stop()
+        self.display_manager.stop()
+        
+        print("Shutdown complete.")
+        sys.exit(exit_code)
+
+def main():
+    """Application entry point"""
+    voicebox = VoiceBox()
+    voicebox.run()
 
 if __name__ == "__main__":
     main()
