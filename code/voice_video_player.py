@@ -67,7 +67,10 @@ class VoiceVideoPlayer:
         """Audio input callback"""
         if status:
             print(status, file=sys.stderr)
-        self.q.put(bytes(indata))
+
+        # NEW: only enqueue audio when we are truly listening
+        if self.is_listening and not self.command_playing:
+            self.q.put(bytes(indata))
 
     def play_video(self, video_key, loop=False, with_audio=False):
         """Play video using VLC with double-buffered hand-off."""
@@ -151,7 +154,7 @@ class VoiceVideoPlayer:
         try:
             with sd.RawInputStream(
                 samplerate=16000, 
-                blocksize=4000, 
+                blocksize=2000,   # 2000 samples @16 kHz = 125 ms
                 dtype="int16",
                 channels=1, 
                 callback=self.audio_callback
@@ -199,28 +202,38 @@ class VoiceVideoPlayer:
         """Handle recognized voice command. This is called from the listener thread."""
         print(f"HANDLING COMMAND: {command}")
 
-        # pause recognition while clip plays
+        # Pause recognition
         self.is_listening = False
         self.command_playing = True
 
-        # NEW: launch the command clip in its own "on-top" VLC
+        # NEW: purge any audio already captured so it can't be processed later
+        while not self.q.empty():
+            try:
+                self.q.get_nowait()
+            except queue.Empty:
+                break
+        self.rec.Reset()       # NEW: drop partial state inside Vosk
+
+        # --- launch the command clip (unchanged) ---
         cmd = ["cvlc", "--intf", "dummy",
                "--no-video-title-show", "--fullscreen", "--no-osd",
-               "--video-on-top",        # <- keeps it above the listening loop
-               "--play-and-exit",       # quit when finished
-               self.videos[command]]
-
-        # this clip *does* have audio
+               "--video-on-top", "--play-and-exit", self.videos[command]]
         command_proc = subprocess.Popen(cmd,
                                         stdout=subprocess.DEVNULL,
                                         stderr=subprocess.DEVNULL)
-
-        # wait for it to finish
         command_proc.wait()
 
         print("Command finished, returning to listening mode.")
 
-        # resume recognition (the listening video has been looping invisibly)
+        # NEW: make sure any mic noise during the clip isn't queued
+        while not self.q.empty():
+            try:
+                self.q.get_nowait()
+            except queue.Empty:
+                break
+        self.rec.Reset()       # fresh start
+
+        # Resume recognition
         self.command_playing = False
         self.is_listening = True
 
