@@ -178,6 +178,51 @@ Voice-controlled video player for Raspberry Pi 3B that plays videos based on voi
 
 ---
 
-**Project Completed**: June 29, 2025
-**Status**: Production Ready ✅
-**Next Steps**: None required - system is fully functional
+## 🔄 USB DYNAMIC VIDEO DISCOVERY UPDATE
+
+### Phase 7: USB Video Discovery Implementation
+- [x] **VideoScanner Class**: Recursively finds video files in directories
+- [x] **VideoRegistry Class**: Thread-safe dynamic video management 
+- [x] **USBMonitor Class**: Monitors `/media/pi/`, `/media/usb*` mount points
+- [x] **Filename to Command**: Converts "movie_trailer.mp4" → "movie trailer"
+- [x] **Enhanced Fuzzy Matching**: Multi-word command support
+- [x] **Namespace Separation**: System videos protected from USB conflicts
+- [x] **Backward Compatibility**: All existing functionality preserved
+
+### New Architecture
+```python
+# OLD: Static hardcoded videos
+self.videos = {"coffee": "/path/coffee.mp4"}
+
+# NEW: Dynamic discovery system  
+self.video_registry = VideoRegistry()
+self.usb_monitor = USBMonitor(self.video_registry)
+# Auto-discovers USB videos + maintains system videos
+```
+
+### User Experience
+1. **Plug USB Drive** → Automatic video discovery
+2. **Say "movie trailer"** → Plays movie_trailer.mp4 from USB
+3. **Say "coffee"** → Plays system coffee.mp4 
+4. **Remove USB** → System videos still work
+
+### Technical Features
+- **Hot-plug Support**: Live USB insertion/removal detection
+- **Multiple USB Drives**: Supports simultaneous USB devices
+- **Thread-safe Updates**: Registry updates don't interrupt playback
+- **Protected System Videos**: welcome, listening, coffee, insect, grasshopper always work
+- **Smart Fuzzy Matching**: "funny cat" matches "funny_cat_video.mp4"
+
+### File Extensions Supported
+`.mp4`, `.avi`, `.mov`, `.mkv`, `.wmv`, `.mpg`, `.mpeg`, `.m4v` (case insensitive)
+
+### Mount Points Monitored
+- `/media/pi/` (Desktop environment)
+- `/media/usb0`, `/media/usb1` (pi-usb-automount)
+- `/mnt/usb` (Manual mounts)
+
+---
+
+**Project Status**: Enhanced with USB Discovery ✅
+**Last Updated**: June 29, 2025
+**Pending**: Pi connectivity for testing (Pi currently offline)
