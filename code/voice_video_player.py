@@ -63,6 +63,21 @@ class VoiceVideoPlayer:
         
         print("Voice Video Player initialized")
 
+    def _maybe_fire_command(self, text):
+        """Helper to check if text contains a command and fire it."""
+        text = text.lower().strip()
+        if not text or len(text.split()) > 3:
+            return False
+        for command in self.commands:
+            if command in text or \
+               (command == "coffee" and ("cafe" in text or "caffeine" in text or "coff" in text)) or \
+               (command == "insect" and ("bug" in text or "beetle" in text or "insec" in text)) or \
+               (command == "grasshopper" and ("grass" in text or "hopper" in text)):
+                print(f"Command detected (partial/full): {command}")
+                self.handle_command(command)
+                return True
+        return False
+
     def audio_callback(self, indata, frames, time, status):
         """Audio input callback"""
         if status:
@@ -72,7 +87,7 @@ class VoiceVideoPlayer:
         if self.is_listening and not self.command_playing:
             self.q.put(bytes(indata))
 
-    def play_video(self, video_key, loop=False, with_audio=False):
+    def play_video(self, video_key, loop=False, with_audio=False, on_top=True):
         """Play video using VLC with double-buffered hand-off."""
         with self.video_lock:
             if video_key not in self.videos:
@@ -88,8 +103,9 @@ class VoiceVideoPlayer:
             cmd = ["cvlc", "--intf", "dummy",
                    "--no-video-title-show",
                    "--fullscreen", "--no-osd",
-                   "--no-video-deco",        # just in case
-                   "--video-on-top"]         # makes sure new window is topmost
+                   "--no-video-deco"]        # just in case
+            if on_top:
+                cmd.append("--video-on-top")   # only add when requested
 
             if not with_audio:
                 cmd.append("--no-audio")
@@ -172,21 +188,11 @@ class VoiceVideoPlayer:
                             
                         if self.rec.AcceptWaveform(data):
                             result = json.loads(self.rec.Result())
-                            text = result.get('text', '').lower().strip()
-                            
-                            if text and len(text.split()) <= 3:
-                                print(f"Recognized: '{text}'")
-                                
-                                for command in self.commands:
-                                    if command in text or \
-                                       (command == "coffee" and ("cafe" in text or "caffeine" in text or "coff" in text)) or \
-                                       (command == "insect" and ("bug" in text or "beetle" in text or "insec" in text)) or \
-                                       (command == "grasshopper" and ("grass" in text or "hopper" in text)):
-                                        
-                                        print(f"Command detected: {command}")
-                                        self.handle_command(command)
-                                        # No return needed; the loop continues after handling
-                                        break # Exit the for loop once a command is handled
+                            self._maybe_fire_command(result.get('text', ''))
+                        else:
+                            # NEW: act on partials immediately
+                            partial = json.loads(self.rec.PartialResult())
+                            self._maybe_fire_command(partial.get('partial', ''))
                                         
                     except queue.Empty:
                         continue
@@ -243,7 +249,7 @@ class VoiceVideoPlayer:
             # ---------------------------------------------------------
             # 1️⃣  Start the silent listening loop FIRST (stays forever)
             # ---------------------------------------------------------
-            self.play_video("listening", loop=True, with_audio=False)  # runs muted in the background
+            self.play_video("listening", loop=True, with_audio=False, on_top=False)  # runs muted in the background
             self.is_listening = False          # do not recognise speech yet
 
             # ---------------------------------------------------------
